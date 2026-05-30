@@ -1,0 +1,80 @@
+[package]
+name = "super-ip-scanner"
+version = "0.1.0"
+description = "Fast cross-platform IP scanner"
+authors = ["Brad Heffernan"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "super_ip_scanner_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+# Tauri shell
+tauri = { version = "2.2", features = [] }
+tauri-plugin-dialog = "2.2"
+tauri-plugin-opener = "2.2"
+tauri-plugin-os = "2.2"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+async-stream = "0.3"
+
+# Networking — scanning
+surge-ping = "0.8"           # async ICMP echo
+rand = "0.8"                 # ICMP identifier
+socket2 = "0.5"              # raw socket helpers
+ipnet = "2.10"               # CIDR parsing / subnet iteration
+default-net = "0.22"         # local interface + gateway detection
+
+# Hostname resolution
+hickory-resolver = { version = "0.24", default-features = false, features = ["system-config", "tokio-runtime"] }
+dns-lookup = "2"             # OS-level getnameinfo — uses Windows' integrated resolver chain (NetBT/WINS/LMHOSTS)
+mdns-sd = "0.11"             # Bonjour / mDNS service discovery
+
+# MAC vendor lookup (embedded OUI db) — re-add in v0.2 once a working crate version is pinned
+
+# Logging + errors
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CSV / JSON export
+csv = "1.3"
+
+# On Unix we use pnet for L2 ARP — needs raw socket + CAP_NET_RAW.
+[target.'cfg(unix)'.dependencies]
+pnet = "0.35"
+pnet_datalink = "0.35"
+
+# On Windows we use SendARP from iphlpapi — no Npcap dependency at compile or runtime.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Networking_WinSock",
+  "Win32_System_Threading",
+] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,44 @@
+# Node
+node_modules
+.svelte-kit
+build
+dist
+.vite
+.env
+.env.*
+!.env.example
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+src-tauri/WixTools
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Claude Code (local assistant docs/state — not part of the project)
+CLAUDE.md
+.claude/
+.claude/**
+
+# Scan exports (runtime output, not source)
+scan-*.json
+scan-*.csv
+
+# Build artifacts / installers
+*.rpm
+*.deb
+*.msi
+*.AppImage
+*.exe

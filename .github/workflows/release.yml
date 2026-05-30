@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: 'windows', os: 'windows-latest', target: 'x86_64-pc-windows-msvc', bundles: 'msi,nsis' }
+          - { name: 'linux',   os: 'ubuntu-22.04',   target: 'x86_64-unknown-linux-gnu', bundles: 'deb,rpm,appimage' }
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Linux build deps
+        if: matrix.platform.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            rpm \
+            libpcap-dev
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build Tauri bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target ${{ matrix.platform.target }} --bundles ${{ matrix.platform.bundles }}
+          releaseDraft: true
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Super IP Scanner ${{ github.ref_name }}'
+          releaseBody: |
+            ## Super IP Scanner ${{ github.ref_name }}
+
+            ### Installers
+            - **Windows**: `.msi` (recommended for orgs) or `.exe` NSIS (per-machine)
+            - **Linux**: `.deb` (Debian/Ubuntu), `.rpm` (Fedora/RHEL), `.AppImage` (universal)
+
+            ### Notes
+            On Linux, the binary needs raw-socket capability for ICMP/ARP:
+            ```
+            sudo setcap cap_net_raw+ep /usr/bin/super-ip-scanner
+            ```
+            (.deb/.rpm post-install scripts will set this automatically.)
