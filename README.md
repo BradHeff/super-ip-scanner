@@ -84,10 +84,12 @@ sudo setcap cap_net_raw+ep $(which super-ip-scanner)
 
 If you're on Linux with Wayland the app forces the X11 backend at startup so it doesn't hit a WebKit rendering bug. You don't have to do anything for this, it just works on GNOME and KDE Plasma.
 
-## Creator
+## Contributors
 
-Made by Brad Heffernan.
+Brad Heffernan
 
 ## License
 
-MIT.
+This project is licensed under the GNU General Public License v3.0. The full text is in the LICENSE file. In short, you're free to use it, change it, and share it, but anything you distribute that's based on it has to stay open source under the same license.
+
+Copyright (C) 2026 Brad Heffernan
