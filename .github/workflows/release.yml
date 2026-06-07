@@ -55,6 +55,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # AppImage bundling runs linuxdeploy (itself an AppImage), which needs FUSE2
+          # (libfuse.so.2). Self-extract instead so the build doesn't depend on FUSE2
+          # being present on the runner (it was dropped in ubuntu-24.04).
+          APPIMAGE_EXTRACT_AND_RUN: 1
         with:
           args: --target ${{ matrix.platform.target }} --bundles ${{ matrix.platform.bundles }}
           releaseDraft: true

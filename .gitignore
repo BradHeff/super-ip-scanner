@@ -13,6 +13,11 @@ src-tauri/target
 src-tauri/gen
 src-tauri/WixTools
 
+# Local-only cargo config (machine-specific target-dir; see file header).
+# Used on this Linux box because the source lives on an NTFS/FUSE drive that
+# can't exec build-scripts — would break the Windows build if committed.
+src-tauri/.cargo/
+
 # IDE
 .vscode/*
 !.vscode/extensions.json

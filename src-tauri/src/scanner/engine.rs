@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use futures::stream::{FuturesUnordered, StreamExt};
+use futures::FutureExt; // catch_unwind on the per-host probe future
 use ipnet::Ipv4Net;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -73,7 +74,11 @@ fn lookup_oui_vendor(mac: &str) -> Option<String> {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ScanEvent {
     Started { total: usize, target: String },
-    HostUpdate { host: HostResult },
+    // Host results are streamed in coalesced batches, not one IPC message per host.
+    // A /24 finishes its ~240 dead hosts in a tight burst; firing one webview.eval per
+    // host floods the main-thread event loop and can crash the webview (both WebKitGTK
+    // and WebView2). Batching keeps the eval count to a few dozen. See run_scan's funnel.
+    HostBatch { hosts: Vec<HostResult> },
     Progress { scanned: usize, alive: usize },
     // u64 ms is plenty (≈584 million years) and avoids u128 JSON serialization quirks.
     Finished { scanned: usize, alive: usize, elapsed_ms: u64 },
@@ -172,8 +177,63 @@ async fn run_scan(
     let sem = Arc::new(Semaphore::new(options.concurrency));
     let mut futs = FuturesUnordered::new();
 
-    let scanned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let alive = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // ── Event funnel ────────────────────────────────────────────────────────
+    // Probe tasks push finished hosts into a bounded mpsc; a SINGLE consumer task
+    // owns the Tauri channel and is the only thing that calls `channel.send`
+    // (→ webview.eval). It coalesces hosts into batches on a short timer so the
+    // webview receives a few dozen IPC messages instead of one per host. The
+    // bounded channel also applies backpressure: if the UI can't keep up, probe
+    // tasks await on `tx.send` rather than racing ahead and ballooning the queue.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<HostResult>(512);
+
+    let consumer = {
+        let channel = channel.clone();
+        tokio::spawn(async move {
+            const BATCH_MAX: usize = 64;
+            let mut scanned = 0usize;
+            let mut alive = 0usize;
+            let mut batch: Vec<HostResult> = Vec::with_capacity(BATCH_MAX);
+            let mut ticker = tokio::time::interval(Duration::from_millis(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            // Flush the pending batch + a progress tick to the webview.
+            macro_rules! flush {
+                () => {
+                    if !batch.is_empty() {
+                        let _ = channel.send(ScanEvent::HostBatch {
+                            hosts: std::mem::take(&mut batch),
+                        });
+                        let _ = channel.send(ScanEvent::Progress { scanned, alive });
+                    }
+                };
+            }
+
+            loop {
+                tokio::select! {
+                    biased;
+                    maybe = rx.recv() => match maybe {
+                        Some(host) => {
+                            scanned += 1;
+                            if host.status == HostStatus::Alive {
+                                alive += 1;
+                            }
+                            batch.push(host);
+                            if batch.len() >= BATCH_MAX {
+                                flush!();
+                            }
+                        }
+                        // All probe tasks finished (every `tx` clone dropped).
+                        None => {
+                            flush!();
+                            break;
+                        }
+                    },
+                    _ = ticker.tick() => flush!(),
+                }
+            }
+            (scanned, alive)
+        })
+    };
 
     for (i, ip) in targets.iter().copied().enumerate() {
         let permit_owner = sem.clone();
@@ -182,9 +242,7 @@ async fn run_scan(
         let ports = ports.clone();
         let cancel = cancel.clone();
         let arp_mac = arp_map.get(&ip).cloned();
-        let channel = channel.clone();
-        let scanned = scanned.clone();
-        let alive = alive.clone();
+        let tx = tx.clone();
         let opts = options.clone();
 
         futs.push(async move {
@@ -196,69 +254,83 @@ async fn run_scan(
                 Err(_) => return,
             };
 
-            let mut host = HostResult::new(ip.to_string());
+            // Isolate the probe body: a panic here (e.g. a malformed packet hitting a
+            // hand-rolled parser on one weird host) must NOT unwind the whole scan or
+            // abort the process — it skips just this host. Requires panic=unwind.
+            let probe = std::panic::AssertUnwindSafe(async {
+                let mut host = HostResult::new(ip.to_string());
 
-            // ARP hit?
-            if let Some(mac) = arp_mac {
-                host.status = HostStatus::Alive;
-                host.via.push("arp".into());
-                host.vendor = lookup_oui_vendor(&mac);
-                host.mac = Some(mac);
-            }
-
-            // ICMP
-            if opts.use_icmp {
-                let ident: u16 = ((i as u16).wrapping_add(1)) | 0x8000;
-                if let Some(rtt) = pinger.ping(IpAddr::V4(ip), timeout, ident).await {
+                // ARP hit?
+                if let Some(mac) = arp_mac {
                     host.status = HostStatus::Alive;
-                    host.rtt_ms = Some(rtt);
-                    host.via.push("icmp".into());
+                    host.via.push("arp".into());
+                    host.vendor = lookup_oui_vendor(&mac);
+                    host.mac = Some(mac);
                 }
-            }
 
-            // TCP probe (also a liveness signal — firewalled hosts may respond)
-            if opts.use_tcp_probe {
-                let open = tcp::scan_ports(IpAddr::V4(ip), &ports, timeout).await;
-                if !open.is_empty() {
-                    host.status = HostStatus::Alive;
-                    if !host.via.contains(&"tcp".to_string()) {
-                        host.via.push("tcp".into());
+                // ICMP
+                if opts.use_icmp {
+                    let ident: u16 = ((i as u16).wrapping_add(1)) | 0x8000;
+                    if let Some(rtt) = pinger.ping(IpAddr::V4(ip), timeout, ident).await {
+                        host.status = HostStatus::Alive;
+                        host.rtt_ms = Some(rtt);
+                        host.via.push("icmp".into());
                     }
                 }
-                host.open_ports = open;
-            }
 
-            // Hostname resolution — only for alive hosts to avoid wasted DNS load.
-            if opts.resolve_hostnames && host.status == HostStatus::Alive {
-                host.hostname = resolver.resolve(IpAddr::V4(ip)).await;
-            }
+                // TCP probe (also a liveness signal — firewalled hosts may respond)
+                if opts.use_tcp_probe {
+                    let open = tcp::scan_ports(IpAddr::V4(ip), &ports, timeout).await;
+                    if !open.is_empty() {
+                        host.status = HostStatus::Alive;
+                        if !host.via.contains(&"tcp".to_string()) {
+                            host.via.push("tcp".into());
+                        }
+                    }
+                    host.open_ports = open;
+                }
 
-            if host.status == HostStatus::Alive {
-                alive.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            } else {
-                host.status = HostStatus::Dead;
-            }
-            let n = scanned.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                // Hostname resolution — only for alive hosts to avoid wasted DNS load.
+                if opts.resolve_hostnames && host.status == HostStatus::Alive {
+                    host.hostname = resolver.resolve(IpAddr::V4(ip)).await;
+                }
 
-            let _ = channel.send(ScanEvent::HostUpdate { host });
-            if n % 16 == 0 || n == total {
-                let _ = channel.send(ScanEvent::Progress {
-                    scanned: n,
-                    alive: alive.load(std::sync::atomic::Ordering::Relaxed),
-                });
+                if host.status != HostStatus::Alive {
+                    host.status = HostStatus::Dead;
+                }
+                host
+            });
+
+            match probe.catch_unwind().await {
+                Ok(host) => {
+                    // Backpressure: await delivery into the funnel.
+                    let _ = tx.send(host).await;
+                }
+                Err(_) => {
+                    tracing::error!("probe for {ip} panicked; skipping host");
+                }
             }
         });
     }
+
+    // Drop our own sender so the consumer's `rx.recv()` can reach `None` once every
+    // per-task `tx` clone is gone.
+    drop(tx);
 
     while futs.next().await.is_some() {
         if cancel.is_cancelled() {
             break;
         }
     }
+    // On cancellation, drop the still-pending probe futures so their `tx` clones are
+    // released — otherwise the consumer would wait forever for the channel to close.
+    drop(futs);
+
+    let (scanned, alive) = consumer.await.unwrap_or((0, 0));
 
     let _ = channel.send(ScanEvent::Finished {
-        scanned: scanned.load(std::sync::atomic::Ordering::Relaxed),
-        alive: alive.load(std::sync::atomic::Ordering::Relaxed),
+        scanned,
+        alive,
         elapsed_ms: started.elapsed().as_millis() as u64,
     });
 

@@ -181,9 +181,11 @@
         total = ev.total;
         lastStatus = `Probing ${ev.total} hosts in ${ev.target}`;
         break;
-      case 'hostUpdate': {
+      case 'hostBatch': {
+        // One copy-on-write per batch (not per host) — keeps Svelte 5 Map reactivity
+        // while matching the backend's coalesced streaming.
         const next = new Map(resultsMap);
-        next.set(ev.host.ip, ev.host);
+        for (const host of ev.hosts) next.set(host.ip, host);
         resultsMap = next;
         break;
       }

@@ -28,7 +28,7 @@ export interface DetectedSubnet {
 
 export type ScanEvent =
   | { type: 'started'; total: number; target: string }
-  | { type: 'hostUpdate'; host: HostResult }
+  | { type: 'hostBatch'; hosts: HostResult[] }
   | { type: 'progress'; scanned: number; alive: number }
   | { type: 'finished'; scanned: number; alive: number; elapsedMs: number }
   | { type: 'error'; message: string };

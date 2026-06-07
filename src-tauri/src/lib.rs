@@ -1,5 +1,5 @@
 mod commands;
-mod scanner;
+pub mod scanner;
 
 use tauri::Manager;
 use tokio::sync::Mutex;

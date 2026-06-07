@@ -76,5 +76,10 @@ custom-protocol = ["tauri/custom-protocol"]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = "abort"
+# panic = "unwind" (the default) is REQUIRED: the scan engine isolates each per-host
+# probe with catch_unwind so one bad host can't take down the scan or the process.
+# With panic = "abort" a stray panic (e.g. a flooded webview or a malformed packet)
+# aborts instantly and the window vanishes — the production crash this fixes. Unwind
+# costs a little binary size; correctness wins for a network tool.
+panic = "unwind"
 strip = true
