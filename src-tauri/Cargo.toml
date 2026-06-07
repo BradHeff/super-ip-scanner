@@ -57,6 +57,10 @@ csv = "1.3"
 [target.'cfg(unix)'.dependencies]
 pnet = "0.35"
 pnet_datalink = "0.35"
+# Raise RLIMIT_NOFILE at startup — graphical sessions start apps with a low soft
+# limit (often 1024); a concurrent scan opens thousands of sockets and would
+# otherwise starve the webview of file descriptors (black window).
+libc = "0.2"
 
 # On Windows we use SendARP from iphlpapi — no Npcap dependency at compile or runtime.
 [target.'cfg(windows)'.dependencies]
