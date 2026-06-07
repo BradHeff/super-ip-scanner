@@ -59,6 +59,9 @@ jobs:
           # (libfuse.so.2). Self-extract instead so the build doesn't depend on FUSE2
           # being present on the runner (it was dropped in ubuntu-24.04).
           APPIMAGE_EXTRACT_AND_RUN: 1
+          # Skip linuxdeploy's strip pass (it can fail; the release binary is already
+          # stripped via the Cargo profile's `strip = true`).
+          NO_STRIP: 1
         with:
           args: --target ${{ matrix.platform.target }} --bundles ${{ matrix.platform.bundles }}
           releaseDraft: true

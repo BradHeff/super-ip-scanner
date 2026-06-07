@@ -83,7 +83,7 @@ install_debian() {
     nodejs \
     npm
   # libfuse2 (FUSE2) is needed to RUN AppImages. To BUILD where it's absent (e.g.
-  # ubuntu-24.04), prefix the build: APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri:build
+  # ubuntu-24.04), prefix the build: APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 npm run tauri:build
 }
 
 if [[ "$NO_SUDO" -eq 0 ]]; then
@@ -166,7 +166,7 @@ Next steps:
   npm run tauri:dev     # run the app (first Rust build takes 3-5 min)
   npm run tauri:build   # build native installers (.deb/.rpm/.AppImage)
   # If AppImage bundling fails with "failed to run linuxdeploy" (no FUSE2):
-  #   APPIMAGE_EXTRACT_AND_RUN=1 npm run tauri:build
+  #   APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1 npm run tauri:build
 
 Linux note: ARP and ICMP need CAP_NET_RAW. For a dev build, grant it once after
 each rebuild (the binary path changes per profile):
