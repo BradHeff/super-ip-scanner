@@ -46,17 +46,24 @@ pub fn run() {
     raise_fd_limit();
 
     // WebKitGTK on some Wayland compositors crashes at startup with
-    // `Gdk-Message: Error 71 (Protocol error) dispatching to Wayland display`.
-    // Disabling the DMABUF renderer and (under Wayland) falling back to the X11
-    // backend via XWayland avoids it. Done before GTK initializes; only sets
-    // each var if the user hasn't overridden it, so `GDK_BACKEND=wayland` still wins.
+    // `Gdk-Message: Error 71 (Protocol error) dispatching to Wayland display`,
+    // and the newer DMABUF renderer renders a black window on several GPU/driver
+    // combinations (notably NVIDIA proprietary and software GL). Disabling the
+    // DMABUF renderer and (under Wayland) falling back to the X11 backend via
+    // XWayland avoids both. Done before GTK initializes; only sets each var if the
+    // user hasn't overridden it, so `GDK_BACKEND=wayland` still wins.
+    //
+    // We deliberately do NOT set `WEBKIT_DISABLE_COMPOSITING_MODE`. Forcing the
+    // non-composited paint path makes WebKitGTK 2.46+ (Skia/GPU, with the new
+    // resize damage-tracking) leave a stale/blank surface after a window resize —
+    // the content vanishes and only the page background shows. The composited path
+    // repaints correctly on resize, so we leave it enabled. The Wayland startup
+    // crash that this var was previously belt-and-suspered against is already
+    // prevented by the X11 fallback below.
     #[cfg(target_os = "linux")]
     {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
-        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         }
         if std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("GDK_BACKEND").is_none()

@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 
 use anyhow::Result;
 
@@ -18,10 +18,7 @@ pub fn list_interfaces() -> Result<Vec<NetIface>> {
             description: ifc.friendly_name.clone().unwrap_or_else(|| ifc.name.clone()),
             mac: ifc.mac_addr.map(|m| m.to_string()),
             ipv4,
-            is_loopback: ifc
-                .ipv4
-                .iter()
-                .any(|n| Ipv4Addr::from(n.addr).is_loopback()),
+            is_loopback: ifc.ipv4.iter().any(|n| n.addr.is_loopback()),
             is_up: ifc.flags & 1 != 0, // IFF_UP
         });
     }
@@ -33,7 +30,7 @@ pub fn detect_local_subnets() -> Result<Vec<DetectedSubnet>> {
     let mut out = Vec::new();
     for ifc in default_net::get_interfaces() {
         for n in &ifc.ipv4 {
-            let addr = Ipv4Addr::from(n.addr);
+            let addr = n.addr;
             if addr.is_loopback() || addr.is_link_local() || addr.is_unspecified() {
                 continue;
             }

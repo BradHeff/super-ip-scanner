@@ -148,7 +148,16 @@ mod platform {
 
         let iface_clone = iface.clone();
         let handle = tokio::task::spawn_blocking(move || -> Result<()> {
-            let (mut tx, mut rx) = match datalink::channel(&iface_clone, Default::default())? {
+            // A read timeout is essential: without it `rx.next()` blocks until *some*
+            // frame arrives, so on a quiet network (no ARP replies) the loop never
+            // re-checks `deadline` and the whole scan hangs here forever. With it,
+            // `next()` returns `TimedOut`/`WouldBlock` periodically and we re-evaluate
+            // the deadline. Keep it short relative to `duration` so we exit promptly.
+            let config = datalink::Config {
+                read_timeout: Some(Duration::from_millis(100)),
+                ..Default::default()
+            };
+            let (mut tx, mut rx) = match datalink::channel(&iface_clone, config)? {
                 Channel::Ethernet(tx, rx) => (tx, rx),
                 _ => return Err(anyhow!("unsupported datalink channel")),
             };
@@ -176,6 +185,14 @@ mod platform {
                         if let Ok(mut g) = results_writer.try_lock() {
                             g.insert(ip, mac);
                         }
+                    }
+                    // A read timeout just means no frame this interval — keep waiting
+                    // until the deadline. Any other error ends the read loop.
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::TimedOut
+                            || e.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        continue
                     }
                     Err(_) => break,
                 }
